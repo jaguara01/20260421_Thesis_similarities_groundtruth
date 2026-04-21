@@ -1,43 +1,228 @@
-# Dataset Similarity Ground Truth Generation
+# Dataset similarties - Ground truth label
 
-A lightweight, standalone Python solution for generating ground truth labels for dataset similarity in data lakes. This tool combines semantic and syntactic signals to automatically identify when two tabular datasets can be meaningfully joined or unioned.
+To implement the lightweigth solution for dataset similarties, we first need to find a ground truth to validate our solution.
+Because I couldn't find any documentation that could validate my work. I decided to implement a more simple approach but heavy.
 
-## Overview
+This groundtruth solution is based on the following definition of similarity:
 
-This project provides a **two-gate validation system** that labels dataset pairs as:
-- **Joinable** — can be combined by matching values in one column
-- **Unionable** — can be stacked row-wise by aligning columns semantically
-- **Similar** — satisfies both semantic meaning AND syntactic compatibility
+Two datasets are similar:
 
-The solution is designed to be:
-- **Lightweight** — runs on a standard laptop without GPU
-- **Fast** — processes hundreds of table pairs in minutes
-- **Agnostic** — works on any tabular data regardless of domain
+1. If their semantic is similar at the table level (Based on 500 rows)
+2. **AND** if they can be joined or unioned together (syntactic + semantic at column level)
 
-## Key Features
+Based on this definition, I build a groundtruth comparing all csv from Freya. The entire process took me 1h30 (Macbook Pro M3 - 36GB RAM)
 
-### Semantic Similarity
-- Table-level embeddings using `sentence-transformers/all-MiniLM-L6-v2` (384-dimensional vectors)
-- Column-level embeddings for fine-grained matching
-- Cosine similarity for quick topic filtering
-- Early exit optimization: skip expensive column analysis if tables are semantically too different
+## Workflow:
 
-### Syntactic Similarity
-- **Join scoring**: Containment metric (|A ∩ B| / |A|) across all column pairs
-- **Union scoring**: Hungarian algorithm for optimal column alignment
-- **Value sampling**: Up to 500 most-frequent values per column
-- **Type matching**: Ensures numeric/string compatibility before scoring
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Two Tables to Compare                       │
+│                    (Query vs Candidate)                         │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+        ┌──────────────────┴──────────────────┐
+        │                                     │
+        ▼                                     ▼
+   ┌─────────────┐                    ┌──────────────┐
+   │   PROFILE   │                    │   PROFILE    │
+   │   TABLES    │                    │   TABLES     │
+   └──────┬──────┘                    └───────┬──────┘
+          │                                   │
+          └───────────────┬───────────────────┘
+                          │
+          ┌───────────────┴───────────────┐
+          │                               │
+          ▼                               ▼
+    ┌──────────────┐              ┌──────────────┐
+    │   SEMANTIC   │              │  SYNTACTIC   │
+    │  SIMILARITY  │              │  SIMILARITY  │
+    │  (Embeddings)│              │  (Overlaps)  │
+    └──────┬───────┘              └───────┬──────┘
+           │                              │
+    ┌──────▼──────┬──────────────────────▼──────┐
+    │             │                             │
+    ▼             ▼                             ▼
+┌─────────┐ ┌──────────┐ ┌──────────────┐ ┌──────────────┐
+│ Table   │ │ Column   │ │ Joinability  │ │ Unionability │
+│ Semantic│ │ Semantic │ │   Score      │ │    Score     │
+│ Score   │ │ Score    │ │              │ │              │
+└────┬────┘ └────┬─────┘ └──────┬───────┘ └────────┬─────┘
+     │           │              │                  │
+     └───────────┴──────────────┴──────────────────┘
+                        │
+                        ▼
+            ┌────────────────────────────┐
+            │   COMBINED VALIDATION      │
+            │  (Check Both Signals)      │
+            └────────────────────────────┘
+                        │
+                        ▼
+            ┌────────────────────────────┐
+            │  Ground Truth Label        │
+            │  (Join / Union / Neither)  │
+            └────────────────────────────┘
+```
 
-### Combined Validation
-- Both gates must pass: `is_similar = (semantic ✓) AND (syntactic ✓)`
-- Thresholds are tunable:
-  - `JOIN_THRESHOLD = 0.15` (syntactic join)
-  - `UNION_THRESHOLD = 0.20` (syntactic union)
-  - `SEMANTIC_THRESHOLD = 0.40` (semantic join/union)
+---
+
+## 1: Light profile of the tables
+
+- **Top values** — the most common 200 unique values
+- **Type** — numeric or string
+- **Cardinality** — how many unique values exist (0 = all same, 1 = all different)
+- **Null ratio** — how many missing values
+
+## 2: Semantic similarity
+
+### 2.1: Table-level semantic score
+
+1. Serealization of the table to text
+2. Embed this text into a 384-dimensional vector
+3. Compare with another table's vector
+4. Compute cosine similarity
+
+This is used as a first filter
+
+### 2.2 Column-level semantic Scores
+
+1. Serealization of each column to text
+2. Embed this text into a 384-dimensional vector
+3. **Semantic Join Score** — best matching column pair
+4. **Semantic Union Score** — average alignment of all columns
+
+This allow us to avoid false positive when comparing 2 columns
+
+---
+
+## 3: Compute Join similarity
+
+### Containment method
+
+```
+containment(A, B) = |A ∩ B| / |A|
++ cardinality similarity check
+```
+
+We are looking for the maximum value of containent score because only one good join is enough to find similarity.
+
+## 4: Compute union similarity
+
+### 4.1 Column pair similarity
+
+For each pair of columns, we compute similarity based on:
+
+- Value overlap (Jaccard) — 70% weight
+- Cardinality similarity — 30% weight
+
+```
+Jaccard(A, B) = |A ∩ B| / |A ∪ B|
+```
+
+### 4.2 Optimal union with the Hungarian algorithm
+
+To find the best union possible, I'm using the Hungarian algorithm
+
+### Union Score Calculation
+
+```
+Union Score = (Average alignment similarity) × Coverage penalty
+
+Coverage = min(n_cols_query, n_cols_candidate) / max(n_cols_query, n_cols_candidate)
+
+```
+
+The coverage penalty is used to penalize large column count mismatches
+
+---
+
+## 5: Groundtruth score
+
+We use both syntactic and semantic signals to avoid false positives.
+
+#### Syntactic score
+
+```
+Syntactic Join:  join_score ≥ 0.15
+Syntactic Union: union_score ≥ 0.20
+```
+
+#### Semantic score
+
+```
+Semantic Join:  semantic_join ≥ 0.40
+Semantic Union: semantic_union ≥ 0.40
+```
+
+### Final Decision
+
+```python
+is_join_gt = 1 if (join_score >= JOIN_THRESHOLD and semantic_join >= SEMANTIC_THRESHOLD) else 0
+is_union_gt = 1 if (union_score >= UNION_THRESHOLD and semantic_union >= SEMANTIC_THRESHOLD) else 0
+is_ground_truth = 1 if (is_join_gt or is_union_gt) else 0
+```
+
+---
+
+## Current thresholds
+
+| Parameter            | Value | Meaning                                          |
+| -------------------- | ----- | ------------------------------------------------ |
+| `JOIN_THRESHOLD`     | 0.15  | Syntactic for joins                              |
+| `UNION_THRESHOLD`    | 0.20  | Syntactic for unions                             |
+| `SEMANTIC_THRESHOLD` | 0.40  | Semantic gate for both                           |
+| `TOP_K`              | 200   | Top 200 frequent values per column for syntactic |
+
+```
+Syntactic thresholds (0.15, 0.20):
+  - Loose: Allow for different column names
+  - Example: customer_id vs cust_id might have 20% variance
+  - But we catch errors with semantic gate
+
+Semantic threshold (0.40):
+  - Strict: Require strong semantic match
+  - Example: "customer_id" and "country" won't both be 0.40+
+  - Acts as final safety check
+```
+
+---
+
+## Decision workflow
+
+```
+Input: Two tables (Query, Candidate)
+       │
+       ├─ Profile both tables
+       │
+       ├─ Compute semantic_table (quick filter)
+       │  └─ If < 0.25 → too different, skip expensive analysis
+       │
+       ├─ Compute join_score (syntactic overlap)
+       │
+       ├─ Compute union_score (syntactic alignment)
+       │
+       ├─ Compute semantic_join (column meaning for join)
+       │
+       ├─ Compute semantic_union (column meaning for union)
+       │
+       └─ Decide:
+          │
+          ├─ If join_score ≥ 0.15 AND semantic_join ≥ 0.40
+          │  → is_join_gt = 1 (joinable)
+          │
+          ├─ If union_score ≥ 0.20 AND semantic_union ≥ 0.40
+          │  → is_union_gt = 1 (unionable)
+          │
+          └─ If either is 1 → is_ground_truth = 1
+```
+
+---
+
+(The following was generated with AI)
 
 ## Installation
 
 ### Requirements
+
 - Python 3.9+
 - ~2GB disk space for semantic model cache
 
@@ -60,32 +245,6 @@ python -c "from sentence_transformers import SentenceTransformer; SentenceTransf
 ```
 
 ## Usage
-
-### Basic Usage
-
-```python
-from generate_groundtruth import score_pair
-from src.gt_profiling import extract_table_profiles
-import pandas as pd
-
-# Load your tables
-df_query = pd.read_csv('query_table.csv')
-df_candidate = pd.read_csv('candidate_table.csv')
-
-# Profile them
-profile_q = extract_table_profiles(df_query, top_k=200)
-profile_c = extract_table_profiles(df_candidate, top_k=200)
-
-# Score the pair
-results = score_pair(
-    'query_table.csv', df_query, profile_q,
-    'candidate_table.csv', df_candidate, profile_c
-)
-
-overall_sim, join, union, sem, sem_join, sem_union, is_join_gt, is_union_gt, is_gt = results
-print(f"Ground truth: {is_gt} | Joinable: {is_join_gt} | Unionable: {is_union_gt}")
-print(f"  Semantic: {sem:.3f} | Syntactic Join: {join:.3f} | Syntactic Union: {union:.3f}")
-```
 
 ### Full Pipeline
 
@@ -143,78 +302,27 @@ DATALAKE_DIR = Path('freya_data')  # Folder with your CSVs
 
 ### Module Breakdown
 
-| Module | Purpose |
-|--------|---------|
-| `gt_profiling.py` | Extract column profiles (top values, type, cardinality) |
-| `gt_similarity_join.py` | Compute containment-based join scores |
-| `gt_similarity_union.py` | Compute Jaccard + Hungarian union scores |
-| `gt_similarity_semantic.py` | Compute semantic embeddings & similarities |
-
-## Documentation
-
-- **[SIMILARITY_DEFINITION.md](SIMILARITY_DEFINITION.md)** — What does "similarity" mean? Examples and intuition.
-- **[GROUNDTRUTH_LOGIC.md](GROUNDTRUTH_LOGIC.md)** — Technical deep-dive into the validation architecture.
-- **[INDEPENDENT_METHOD.md](INDEPENDENT_METHOD.md)** — Design decisions and alternatives considered.
-- **[PYTHON_GUIDE.md](PYTHON_GUIDE.md)** — Code walkthrough for beginners.
+| Module                      | Purpose                                                 |
+| --------------------------- | ------------------------------------------------------- |
+| `gt_profiling.py`           | Extract column profiles (top values, type, cardinality) |
+| `gt_similarity_join.py`     | Compute containment-based join scores                   |
+| `gt_similarity_union.py`    | Compute Jaccard + Hungarian union scores                |
+| `gt_similarity_semantic.py` | Compute semantic embeddings & similarities              |
 
 ## Output Format
 
 `validation_groundtruth.csv`:
 
-| Column | Meaning |
-|--------|---------|
-| `query_table` | Name of query table |
-| `candidate_table` | Name of candidate table |
-| `similarity` | max(join_score, union_score) |
-| `joinability` | Join containment score [0, 1] |
-| `unionability` | Union alignment score [0, 1] |
-| `semantic_table` | Table-level semantic similarity [0, 1] |
-| `semantic_join` | Best column-pair semantic match [0, 1] |
-| `semantic_union` | Avg semantic alignment across optimal columns [0, 1] |
-| `is_join_gt` | 1 if joinable, 0 otherwise |
-| `is_union_gt` | 1 if unionable, 0 otherwise |
-| `is_ground_truth` | 1 if either join or union possible, 0 otherwise |
-
-## Performance
-
-Tested on ~160 real-world CSVs (FREYJA benchmark):
-
-- **Time**: ~5-10 seconds per query table (50 candidates) on CPU
-- **Accuracy**: ~130 positive matches per 810 pairs (16% ground truth density)
-- **Memory**: ~500MB for embeddings cache
-
-## Limitations & Future Work
-
-1. **Sampling bias** — Currently uses most-frequent 500 values. Could improve with stratified sampling.
-2. **Column order** — Union matching is order-independent via Hungarian algorithm, but join detection is still greedy.
-3. **Numeric columns** — High-cardinality numeric columns are skipped. Could add range-based matching.
-4. **Domain adaptation** — Fixed semantic model. Could fine-tune on domain-specific tables.
-
-## Citation
-
-If you use this tool in your research, please cite:
-
-```bibtex
-@software{dataset_similarity_gt,
-  title={Dataset Similarity Ground Truth Generation},
-  author={Your Name},
-  year={2026},
-  url={https://github.com/yourusername/dataset-similarity-groundtruth}
-}
-```
-
-## License
-
-MIT License — see [LICENSE](LICENSE) for details.
-
-## Contributing
-
-Contributions welcome! Please open an issue or submit a pull request.
-
-## Contact
-
-For questions, please open an issue on GitHub.
-
----
-
-**Part of a thesis project on hybrid semantic-syntactic data discovery in data lakes.**
+| Column            | Meaning                                              |
+| ----------------- | ---------------------------------------------------- |
+| `query_table`     | Name of query table                                  |
+| `candidate_table` | Name of candidate table                              |
+| `similarity`      | max(join_score, union_score)                         |
+| `joinability`     | Join containment score [0, 1]                        |
+| `unionability`    | Union alignment score [0, 1]                         |
+| `semantic_table`  | Table-level semantic similarity [0, 1]               |
+| `semantic_join`   | Best column-pair semantic match [0, 1]               |
+| `semantic_union`  | Avg semantic alignment across optimal columns [0, 1] |
+| `is_join_gt`      | 1 if joinable, 0 otherwise                           |
+| `is_union_gt`     | 1 if unionable, 0 otherwise                          |
+| `is_ground_truth` | 1 if either join or union possible, 0 otherwise      |
