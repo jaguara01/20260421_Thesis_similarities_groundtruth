@@ -225,7 +225,6 @@ Input: Two tables (Query, Candidate)
 
 - Python 3.9+
 - ~2GB disk space for semantic model cache
-- ~3GB disk space for CSV datasets
 
 ### Setup
 
@@ -242,9 +241,14 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
 # 4. Download CSV datasets
-# Download from: https://mydisk.cs.upc.edu/s/QHJbKcyeacxq35f
+```
+
+Download from: https://mydisk.cs.upc.edu/s/QHJbKcyeacxq35f
+
+```bash
 # Extract to a folder named 'freya_data' in the project root
 # The folder should be at the same level as generate_groundtruth.py
+
 
 # 5. Download semantic model (automatic on first use, or manual)
 python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
