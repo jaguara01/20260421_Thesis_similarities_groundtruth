@@ -225,13 +225,14 @@ Input: Two tables (Query, Candidate)
 
 - Python 3.9+
 - ~2GB disk space for semantic model cache
+- ~3GB disk space for CSV datasets
 
 ### Setup
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/yourusername/dataset-similarity-groundtruth.git
-cd dataset-similarity-groundtruth
+git clone https://github.com/jaguara01/20260421_Thesis_similarities_groundtruth.git
+cd 20260421_Thesis_similarities_groundtruth
 
 # 2. Create virtual environment
 python3 -m venv venv
@@ -240,7 +241,12 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 # 3. Install dependencies
 pip install -r requirements.txt
 
-# 4. Download semantic model (automatic on first use, or manual)
+# 4. Download CSV datasets
+# Download from: https://mydisk.cs.upc.edu/s/QHJbKcyeacxq35f
+# Extract to a folder named 'freya_data' in the project root
+# The folder should be at the same level as generate_groundtruth.py
+
+# 5. Download semantic model (automatic on first use, or manual)
 python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 ```
 
