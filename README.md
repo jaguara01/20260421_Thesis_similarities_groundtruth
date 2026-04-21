@@ -1,4 +1,4 @@
-# Dataset similarties - Ground truth label
+# Dataset similarties - Groundtruth labels
 
 To implement the lightweigth solution for dataset similarties, we first need to find a ground truth to validate our solution.
 Because I couldn't find any documentation that could validate my work. I decided to implement a more simple approach but heavy.
